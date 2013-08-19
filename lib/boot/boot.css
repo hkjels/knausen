@@ -1,0 +1,26 @@
+
+html, body {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size:100%;
+  font: inherit;
+  height: 100%;
+  width: 100%;
+  vertical-align: baseline;
+}
+body {
+  font: 75%/1.5em Georgia, serif;
+}
+
+.weatherlink {
+  width: 100%;
+}
+  .weatherlink table {
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 20px;
+    position: absolute;
+    width: 100%;
+  }
+
