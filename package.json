@@ -3,7 +3,9 @@
   "author": "Henrik Kjelsberg <hkjels@me.com>",
   "version": "0.0.01",
   "private": true,
-  "main": "serve.js",
+  "scripts": {
+    "start": "node ."
+  },
   "dependencies": {
     "express": "3.3.5",
     "superagent": "0.15.4"
