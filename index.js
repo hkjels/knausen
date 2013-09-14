@@ -14,6 +14,7 @@ var express = require('express')
  * Middle-ware.
  */
 
+app.use(express.favicon());
 app.use(express.bodyParser());
 app.use(express.compress());
 app.use(express.static(__dirname + '/public'));
