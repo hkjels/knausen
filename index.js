@@ -5,15 +5,14 @@
 
 var express = require('express')
   , request = require('superagent')
-  , debug = require('debug')
   , app = module.exports = express();
-
 
 
 /**
  * Middle-ware.
  */
 
+app.use(express.logger('dev'));
 app.use(express.favicon());
 app.use(express.bodyParser());
 app.use(express.compress());
@@ -27,11 +26,8 @@ app.use(app.router);
 
 var weather = 'http://www.weatherlink.com/user/kjero/index.php?view=summary&headers=1';
 app.get('/weather', function(req, res) {
-  debug('Request made');
   request.get(weather).end(function(resp) {
     if (res.error) {
-      debug('Failed request');
-      debug(res.error);
       console.error(res.error);
     } else {
       var text = resp.text
@@ -43,6 +39,7 @@ app.get('/weather', function(req, res) {
       text = text.replace(/\<hr.+\>/g, '');
       res.type('html');
       res.end(text);
+      return;
     }
   });
 });
@@ -56,6 +53,7 @@ app.all('*', clientSide);
 
 function clientSide(req, res) {
   res.sendfile(__dirname + '/layout.html');
+  return;
 }
 
 
@@ -64,7 +62,8 @@ function clientSide(req, res) {
  */
 
 if (!module.parent) {
-  app.listen(8080);
-  console.log('Hitra is up and running on port %d', 8080);
+  var port = process.env.PORT || 8080;
+  app.listen(port);
+  console.log('Hitra is up and running on port %d', port);
 }
 

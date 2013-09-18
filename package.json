@@ -4,15 +4,13 @@
   "version": "0.0.01",
   "private": true,
   "scripts": {
-    "start": "node ."
+    "start": "node index.js"
   },
   "dependencies": {
     "express": "3.3.5",
-    "debug": "*",
     "superagent": "0.15.4"
   },
   "devDependencies": {
-    "component": "~0.17.x",
-    "node-dev": "*"
+    "component": "~0.17.x"
   }
 }
