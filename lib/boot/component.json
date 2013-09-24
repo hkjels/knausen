@@ -2,9 +2,13 @@
   "name": "boot",
   "dependencies": {
     "component/dom": "*",
+    "component/raf": "*",
+    "component/model": "*",
+    "heavyk/format": "*",
     "visionmedia/page.js": "*",
     "visionmedia/superagent": "*"
   },
+  "local": ["weather-view"],
   "scripts": ["boot.js"],
   "styles": ["boot.css"],
   "main": "boot.js"

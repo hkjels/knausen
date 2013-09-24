@@ -1,0 +1,11 @@
+{
+  "name": "weather-view",
+  "scripts": ["index.js"],
+  "styles": ["style.css"],
+  "templates": ["template.html"],
+  "dependencies": {
+    "component/domify": "*",
+    "component/emitter": "*",
+    "component/reactive": "*"
+  }
+}

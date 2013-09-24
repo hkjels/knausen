@@ -26,10 +26,14 @@ function require(path, parent, orig) {
   // perform real require()
   // by invoking the module's
   // registered function
-  if (!module.exports) {
-    module.exports = {};
-    module.client = module.component = true;
-    module.call(this, module.exports, require.relative(resolved), module);
+  if (!module._resolving && !module.exports) {
+    var mod = {};
+    mod.exports = {};
+    mod.client = mod.component = true;
+    module._resolving = true;
+    module.call(this, mod.exports, require.relative(resolved), mod);
+    delete module._resolving;
+    module.exports = mod.exports;
   }
 
   return module.exports;
@@ -245,7 +249,7 @@ require.register("component-event/index.js", function(exports, require, module){
 
 exports.bind = function(el, type, fn, capture){
   if (el.addEventListener) {
-    el.addEventListener(type, fn, capture || false);
+    el.addEventListener(type, fn, capture);
   } else {
     el.attachEvent('on' + type, fn);
   }
@@ -265,7 +269,7 @@ exports.bind = function(el, type, fn, capture){
 
 exports.unbind = function(el, type, fn, capture){
   if (el.removeEventListener) {
-    el.removeEventListener(type, fn, capture || false);
+    el.removeEventListener(type, fn, capture);
   } else {
     el.detachEvent('on' + type, fn);
   }
@@ -319,8 +323,11 @@ exports.unbind = function(el, type, fn, capture){
 
 });
 require.register("component-indexof/index.js", function(exports, require, module){
+
+var indexOf = [].indexOf;
+
 module.exports = function(arr, obj){
-  if (arr.indexOf) return arr.indexOf(obj);
+  if (indexOf) return arr.indexOf(obj);
   for (var i = 0; i < arr.length; ++i) {
     if (arr[i] === obj) return i;
   }
@@ -1673,436 +1680,232 @@ attrs.forEach(function(name){
 
 
 });
-require.register("visionmedia-page.js/index.js", function(exports, require, module){
+require.register("component-raf/index.js", function(exports, require, module){
 
-;(function(){
+/**
+ * Expose `requestAnimationFrame()`.
+ */
 
-  /**
-   * Perform initial dispatch.
-   */
+exports = module.exports = window.requestAnimationFrame
+  || window.webkitRequestAnimationFrame
+  || window.mozRequestAnimationFrame
+  || window.oRequestAnimationFrame
+  || window.msRequestAnimationFrame
+  || fallback;
 
-  var dispatch = true;
+/**
+ * Fallback implementation.
+ */
 
-  /**
-   * Base path.
-   */
+var prev = new Date().getTime();
+function fallback(fn) {
+  var curr = new Date().getTime();
+  var ms = Math.max(0, 16 - (curr - prev));
+  setTimeout(fn, ms);
+  prev = curr;
+}
 
-  var base = '';
+/**
+ * Cancel.
+ */
 
-  /**
-   * Running flag.
-   */
+var cancel = window.cancelAnimationFrame
+  || window.webkitCancelAnimationFrame
+  || window.mozCancelAnimationFrame
+  || window.oCancelAnimationFrame
+  || window.msCancelAnimationFrame;
 
-  var running;
+exports.cancel = function(id){
+  cancel.call(window, id);
+};
 
-  /**
-   * Register `path` with callback `fn()`,
-   * or route `path`, or `page.start()`.
-   *
-   *   page(fn);
-   *   page('*', fn);
-   *   page('/user/:id', load, user);
-   *   page('/user/' + user.id, { some: 'thing' });
-   *   page('/user/' + user.id);
-   *   page();
-   *
-   * @param {String|Function} path
-   * @param {Function} fn...
-   * @api public
-   */
+});
+require.register("component-to-function/index.js", function(exports, require, module){
 
-  function page(path, fn) {
-    // <callback>
-    if ('function' == typeof path) {
-      return page('*', path);
-    }
+/**
+ * Expose `toFunction()`.
+ */
 
-    // route <path> to <callback ...>
-    if ('function' == typeof fn) {
-      var route = new Route(path);
-      for (var i = 1; i < arguments.length; ++i) {
-        page.callbacks.push(route.middleware(arguments[i]));
-      }
-    // show <path> with [state]
-    } else if ('string' == typeof path) {
-      page.show(path, fn);
-    // start [options]
-    } else {
-      page.start(path);
-    }
+module.exports = toFunction;
+
+/**
+ * Convert `obj` to a `Function`.
+ *
+ * @param {Mixed} obj
+ * @return {Function}
+ * @api private
+ */
+
+function toFunction(obj) {
+  switch ({}.toString.call(obj)) {
+    case '[object Object]':
+      return objectToFunction(obj);
+    case '[object Function]':
+      return obj;
+    case '[object String]':
+      return stringToFunction(obj);
+    case '[object RegExp]':
+      return regexpToFunction(obj);
+    default:
+      return defaultToFunction(obj);
   }
+}
 
-  /**
-   * Callback functions.
-   */
+/**
+ * Default to strict equality.
+ *
+ * @param {Mixed} val
+ * @return {Function}
+ * @api private
+ */
 
-  page.callbacks = [];
-
-  /**
-   * Get or set basepath to `path`.
-   *
-   * @param {String} path
-   * @api public
-   */
-
-  page.base = function(path){
-    if (0 == arguments.length) return base;
-    base = path;
-  };
-
-  /**
-   * Bind with the given `options`.
-   *
-   * Options:
-   *
-   *    - `click` bind to click events [true]
-   *    - `popstate` bind to popstate [true]
-   *    - `dispatch` perform initial dispatch [true]
-   *
-   * @param {Object} options
-   * @api public
-   */
-
-  page.start = function(options){
-    options = options || {};
-    if (running) return;
-    running = true;
-    if (false === options.dispatch) dispatch = false;
-    if (false !== options.popstate) window.addEventListener('popstate', onpopstate, false);
-    if (false !== options.click) window.addEventListener('click', onclick, false);
-    if (!dispatch) return;
-    page.replace(location.pathname + location.search, null, true, dispatch);
-  };
-
-  /**
-   * Unbind click and popstate event handlers.
-   *
-   * @api public
-   */
-
-  page.stop = function(){
-    running = false;
-    removeEventListener('click', onclick, false);
-    removeEventListener('popstate', onpopstate, false);
-  };
-
-  /**
-   * Show `path` with optional `state` object.
-   *
-   * @param {String} path
-   * @param {Object} state
-   * @param {Boolean} dispatch
-   * @return {Context}
-   * @api public
-   */
-
-  page.show = function(path, state, dispatch){
-    var ctx = new Context(path, state);
-    if (false !== dispatch) page.dispatch(ctx);
-    if (!ctx.unhandled) ctx.pushState();
-    return ctx;
-  };
-
-  /**
-   * Replace `path` with optional `state` object.
-   *
-   * @param {String} path
-   * @param {Object} state
-   * @return {Context}
-   * @api public
-   */
-
-  page.replace = function(path, state, init, dispatch){
-    var ctx = new Context(path, state);
-    ctx.init = init;
-    if (null == dispatch) dispatch = true;
-    if (dispatch) page.dispatch(ctx);
-    ctx.save();
-    return ctx;
-  };
-
-  /**
-   * Dispatch the given `ctx`.
-   *
-   * @param {Object} ctx
-   * @api private
-   */
-
-  page.dispatch = function(ctx){
-    var i = 0;
-
-    function next() {
-      var fn = page.callbacks[i++];
-      if (!fn) return unhandled(ctx);
-      fn(ctx, next);
-    }
-
-    next();
-  };
-
-  /**
-   * Unhandled `ctx`. When it's not the initial
-   * popstate then redirect. If you wish to handle
-   * 404s on your own use `page('*', callback)`.
-   *
-   * @param {Context} ctx
-   * @api private
-   */
-
-  function unhandled(ctx) {
-    if (window.location.pathname + window.location.search == ctx.canonicalPath) return;
-    page.stop();
-    ctx.unhandled = true;
-    window.location = ctx.canonicalPath;
+function defaultToFunction(val) {
+  return function(obj){
+    return val === obj;
   }
+}
 
-  /**
-   * Initialize a new "request" `Context`
-   * with the given `path` and optional initial `state`.
-   *
-   * @param {String} path
-   * @param {Object} state
-   * @api public
-   */
+/**
+ * Convert `re` to a function.
+ *
+ * @param {RegExp} re
+ * @return {Function}
+ * @api private
+ */
 
-  function Context(path, state) {
-    if ('/' == path[0] && 0 != path.indexOf(base)) path = base + path;
-    var i = path.indexOf('?');
-    this.canonicalPath = path;
-    this.path = path.replace(base, '') || '/';
-    this.title = document.title;
-    this.state = state || {};
-    this.state.path = path;
-    this.querystring = ~i ? path.slice(i + 1) : '';
-    this.pathname = ~i ? path.slice(0, i) : path;
-    this.params = [];
+function regexpToFunction(re) {
+  return function(obj){
+    return re.test(obj);
   }
+}
 
-  /**
-   * Expose `Context`.
-   */
+/**
+ * Convert property `str` to a function.
+ *
+ * @param {String} str
+ * @return {Function}
+ * @api private
+ */
 
-  page.Context = Context;
+function stringToFunction(str) {
+  // immediate such as "> 20"
+  if (/^ *\W+/.test(str)) return new Function('_', 'return _ ' + str);
 
-  /**
-   * Push state.
-   *
-   * @api private
-   */
+  // properties such as "name.first" or "age > 18"
+  return new Function('_', 'return _.' + str);
+}
 
-  Context.prototype.pushState = function(){
-    history.pushState(this.state, this.title, this.canonicalPath);
-  };
+/**
+ * Convert `object` to a function.
+ *
+ * @param {Object} object
+ * @return {Function}
+ * @api private
+ */
 
-  /**
-   * Save the context state.
-   *
-   * @api public
-   */
-
-  Context.prototype.save = function(){
-    history.replaceState(this.state, this.title, this.canonicalPath);
-  };
-
-  /**
-   * Initialize `Route` with the given HTTP `path`,
-   * and an array of `callbacks` and `options`.
-   *
-   * Options:
-   *
-   *   - `sensitive`    enable case-sensitive routes
-   *   - `strict`       enable strict matching for trailing slashes
-   *
-   * @param {String} path
-   * @param {Object} options.
-   * @api private
-   */
-
-  function Route(path, options) {
-    options = options || {};
-    this.path = path;
-    this.method = 'GET';
-    this.regexp = pathtoRegexp(path
-      , this.keys = []
-      , options.sensitive
-      , options.strict);
+function objectToFunction(obj) {
+  var match = {}
+  for (var key in obj) {
+    match[key] = typeof obj[key] === 'string'
+      ? defaultToFunction(obj[key])
+      : toFunction(obj[key])
   }
-
-  /**
-   * Expose `Route`.
-   */
-
-  page.Route = Route;
-
-  /**
-   * Return route middleware with
-   * the given callback `fn()`.
-   *
-   * @param {Function} fn
-   * @return {Function}
-   * @api public
-   */
-
-  Route.prototype.middleware = function(fn){
-    var self = this;
-    return function(ctx, next){
-      if (self.match(ctx.path, ctx.params)) return fn(ctx, next);
-      next();
+  return function(val){
+    if (typeof val !== 'object') return false;
+    for (var key in match) {
+      if (!(key in val)) return false;
+      if (!match[key](val[key])) return false;
     }
-  };
-
-  /**
-   * Check if this route matches `path`, if so
-   * populate `params`.
-   *
-   * @param {String} path
-   * @param {Array} params
-   * @return {Boolean}
-   * @api private
-   */
-
-  Route.prototype.match = function(path, params){
-    var keys = this.keys
-      , qsIndex = path.indexOf('?')
-      , pathname = ~qsIndex ? path.slice(0, qsIndex) : path
-      , m = this.regexp.exec(pathname);
-
-    if (!m) return false;
-
-    for (var i = 1, len = m.length; i < len; ++i) {
-      var key = keys[i - 1];
-
-      var val = 'string' == typeof m[i]
-        ? decodeURIComponent(m[i])
-        : m[i];
-
-      if (key) {
-        params[key.name] = undefined !== params[key.name]
-          ? params[key.name]
-          : val;
-      } else {
-        params.push(val);
-      }
-    }
-
     return true;
-  };
+  }
+}
 
-  /**
-   * Normalize the given path string,
-   * returning a regular expression.
-   *
-   * An empty array should be passed,
-   * which will contain the placeholder
-   * key names. For example "/user/:id" will
-   * then contain ["id"].
-   *
-   * @param  {String|RegExp|Array} path
-   * @param  {Array} keys
-   * @param  {Boolean} sensitive
-   * @param  {Boolean} strict
-   * @return {RegExp}
-   * @api private
-   */
+});
+require.register("component-each/index.js", function(exports, require, module){
 
-  function pathtoRegexp(path, keys, sensitive, strict) {
-    if (path instanceof RegExp) return path;
-    if (path instanceof Array) path = '(' + path.join('|') + ')';
-    path = path
-      .concat(strict ? '' : '/?')
-      .replace(/\/\(/g, '(?:/')
-      .replace(/(\/)?(\.)?:(\w+)(?:(\(.*?\)))?(\?)?/g, function(_, slash, format, key, capture, optional){
-        keys.push({ name: key, optional: !! optional });
-        slash = slash || '';
-        return ''
-          + (optional ? '' : slash)
-          + '(?:'
-          + (optional ? slash : '')
-          + (format || '') + (capture || (format && '([^/.]+?)' || '([^/]+?)')) + ')'
-          + (optional || '');
-      })
-      .replace(/([\/.])/g, '\\$1')
-      .replace(/\*/g, '(.*)');
-    return new RegExp('^' + path + '$', sensitive ? '' : 'i');
-  };
+/**
+ * Module dependencies.
+ */
 
-  /**
-   * Handle "populate" events.
-   */
+var toFunction = require('to-function');
+var type;
 
-  function onpopstate(e) {
-    if (e.state) {
-      var path = e.state.path;
-      page.replace(path, e.state);
+try {
+  type = require('type-component');
+} catch (e) {
+  type = require('type');
+}
+
+/**
+ * HOP reference.
+ */
+
+var has = Object.prototype.hasOwnProperty;
+
+/**
+ * Iterate the given `obj` and invoke `fn(val, i)`.
+ *
+ * @param {String|Array|Object} obj
+ * @param {Function} fn
+ * @api public
+ */
+
+module.exports = function(obj, fn){
+  fn = toFunction(fn);
+  switch (type(obj)) {
+    case 'array':
+      return array(obj, fn);
+    case 'object':
+      if ('number' == typeof obj.length) return array(obj, fn);
+      return object(obj, fn);
+    case 'string':
+      return string(obj, fn);
+  }
+};
+
+/**
+ * Iterate string chars.
+ *
+ * @param {String} obj
+ * @param {Function} fn
+ * @api private
+ */
+
+function string(obj, fn) {
+  for (var i = 0; i < obj.length; ++i) {
+    fn(obj.charAt(i), i);
+  }
+}
+
+/**
+ * Iterate object keys.
+ *
+ * @param {Object} obj
+ * @param {Function} fn
+ * @api private
+ */
+
+function object(obj, fn) {
+  for (var key in obj) {
+    if (has.call(obj, key)) {
+      fn(key, obj[key]);
     }
   }
+}
 
-  /**
-   * Handle "click" events.
-   */
+/**
+ * Iterate array-ish.
+ *
+ * @param {Array|Object} obj
+ * @param {Function} fn
+ * @api private
+ */
 
-  function onclick(e) {
-    if (1 != which(e)) return;
-    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-    if (e.defaultPrevented) return;
-
-    // ensure link
-    var el = e.target;
-    while (el && 'A' != el.nodeName) el = el.parentNode;
-    if (!el || 'A' != el.nodeName) return;
-
-    // ensure non-hash
-    var href = el.href;
-    var path = el.pathname + el.search;
-    if (el.hash || '#' == el.getAttribute('href')) return;
-
-    // check target
-    if (el.target) return;
-
-    // x-origin
-    if (!sameOrigin(href)) return;
-
-    // same page
-    var orig = path;
-    path = path.replace(base, '');
-    if (base && orig == path) return;
-
-    e.preventDefault();
-    page.show(orig);
+function array(obj, fn) {
+  for (var i = 0; i < obj.length; ++i) {
+    fn(obj[i], i);
   }
-
-  /**
-   * Event button.
-   */
-
-  function which(e) {
-    e = e || window.event;
-    return null == e.which
-      ? e.button
-      : e.which;
-  }
-
-  /**
-   * Check if `href` is the same origin.
-   */
-
-  function sameOrigin(href) {
-    var origin = location.protocol + '//' + location.hostname;
-    if (location.port) origin += ':' + location.port;
-    return 0 == href.indexOf(origin);
-  }
-
-  /**
-   * Expose `page`.
-   */
-
-  if ('undefined' == typeof module) {
-    window.page = page;
-  } else {
-    module.exports = page;
-  }
-
-})();
+}
 
 });
 require.register("component-emitter/index.js", function(exports, require, module){
@@ -2268,6 +2071,1944 @@ Emitter.prototype.listeners = function(event){
 Emitter.prototype.hasListeners = function(event){
   return !! this.listeners(event).length;
 };
+
+});
+require.register("component-enumerable/index.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var toFunction = require('to-function')
+  , proto = {};
+
+/**
+ * Expose `Enumerable`.
+ */
+
+module.exports = Enumerable;
+
+/**
+ * Mixin to `obj`.
+ *
+ *    var Enumerable = require('enumerable');
+ *    Enumerable(Something.prototype);
+ *
+ * @param {Object} obj
+ * @return {Object} obj
+ */
+
+function mixin(obj){
+  for (var key in proto) obj[key] = proto[key];
+  obj.__iterate__ = obj.__iterate__ || defaultIterator;
+  return obj;
+}
+
+/**
+ * Initialize a new `Enumerable` with the given `obj`.
+ *
+ * @param {Object} obj
+ * @api private
+ */
+
+function Enumerable(obj) {
+  if (!(this instanceof Enumerable)) {
+    if (Array.isArray(obj)) return new Enumerable(obj);
+    return mixin(obj);
+  }
+  this.obj = obj;
+}
+
+/*!
+ * Default iterator utilizing `.length` and subscripts.
+ */
+
+function defaultIterator() {
+  var self = this;
+  return {
+    length: function(){ return self.length },
+    get: function(i){ return self[i] }
+  }
+}
+
+/**
+ * Return a string representation of this enumerable.
+ *
+ *    [Enumerable [1,2,3]]
+ *
+ * @return {String}
+ * @api public
+ */
+
+Enumerable.prototype.inspect =
+Enumerable.prototype.toString = function(){
+  return '[Enumerable ' + JSON.stringify(this.obj) + ']';
+};
+
+/**
+ * Iterate enumerable.
+ *
+ * @return {Object}
+ * @api private
+ */
+
+Enumerable.prototype.__iterate__ = function(){
+  var obj = this.obj;
+  obj.__iterate__ = obj.__iterate__ || defaultIterator;
+  return obj.__iterate__();
+};
+
+/**
+ * Iterate each value and invoke `fn(val, i)`.
+ *
+ *    users.each(function(val, i){
+ *
+ *    })
+ *
+ * @param {Function} fn
+ * @return {Object} self
+ * @api public
+ */
+
+proto.forEach =
+proto.each = function(fn){
+  var vals = this.__iterate__();
+  var len = vals.length();
+  for (var i = 0; i < len; ++i) {
+    fn(vals.get(i), i);
+  }
+  return this;
+};
+
+/**
+ * Map each return value from `fn(val, i)`.
+ *
+ * Passing a callback function:
+ *
+ *    users.map(function(user){
+ *      return user.name.first
+ *    })
+ *
+ * Passing a property string:
+ *
+ *    users.map('name.first')
+ *
+ * @param {Function} fn
+ * @return {Enumerable}
+ * @api public
+ */
+
+proto.map = function(fn){
+  fn = toFunction(fn);
+  var vals = this.__iterate__();
+  var len = vals.length();
+  var arr = [];
+  for (var i = 0; i < len; ++i) {
+    arr.push(fn(vals.get(i), i));
+  }
+  return new Enumerable(arr);
+};
+
+/**
+ * Select all values that return a truthy value of `fn(val, i)`.
+ *
+ *    users.select(function(user){
+ *      return user.age > 20
+ *    })
+ *
+ *  With a property:
+ *
+ *    items.select('complete')
+ *
+ * @param {Function|String} fn
+ * @return {Enumerable}
+ * @api public
+ */
+
+proto.filter =
+proto.select = function(fn){
+  fn = toFunction(fn);
+  var val;
+  var arr = [];
+  var vals = this.__iterate__();
+  var len = vals.length();
+  for (var i = 0; i < len; ++i) {
+    val = vals.get(i);
+    if (fn(val, i)) arr.push(val);
+  }
+  return new Enumerable(arr);
+};
+
+/**
+ * Select all unique values.
+ *
+ *    nums.unique()
+ *
+ * @return {Enumerable}
+ * @api public
+ */
+
+proto.unique = function(){
+  var val;
+  var arr = [];
+  var vals = this.__iterate__();
+  var len = vals.length();
+  for (var i = 0; i < len; ++i) {
+    val = vals.get(i);
+    if (~arr.indexOf(val)) continue;
+    arr.push(val);
+  }
+  return new Enumerable(arr);
+};
+
+/**
+ * Reject all values that return a truthy value of `fn(val, i)`.
+ *
+ * Rejecting using a callback:
+ *
+ *    users.reject(function(user){
+ *      return user.age < 20
+ *    })
+ *
+ * Rejecting with a property:
+ *
+ *    items.reject('complete')
+ *
+ * Rejecting values via `==`:
+ *
+ *    data.reject(null)
+ *    users.reject(tobi)
+ *
+ * @param {Function|String|Mixed} fn
+ * @return {Enumerable}
+ * @api public
+ */
+
+proto.reject = function(fn){
+  var val;
+  var arr = [];
+  var vals = this.__iterate__();
+  var len = vals.length();
+
+  if ('string' == typeof fn) fn = toFunction(fn);
+
+  if (fn) {
+    for (var i = 0; i < len; ++i) {
+      val = vals.get(i);
+      if (!fn(val, i)) arr.push(val);
+    }
+  } else {
+    for (var i = 0; i < len; ++i) {
+      val = vals.get(i);
+      if (val != fn) arr.push(val);
+    }
+  }
+
+  return new Enumerable(arr);
+};
+
+/**
+ * Reject `null` and `undefined`.
+ *
+ *    [1, null, 5, undefined].compact()
+ *    // => [1,5]
+ *
+ * @return {Enumerable}
+ * @api public
+ */
+
+
+proto.compact = function(){
+  return this.reject(null);
+};
+
+/**
+ * Return the first value when `fn(val, i)` is truthy,
+ * otherwise return `undefined`.
+ *
+ *    users.find(function(user){
+ *      return user.role == 'admin'
+ *    })
+ *
+ * With a property string:
+ *
+ *    users.find('age > 20')
+ *
+ * @param {Function|String} fn
+ * @return {Mixed}
+ * @api public
+ */
+
+proto.find = function(fn){
+  fn = toFunction(fn);
+  var val;
+  var vals = this.__iterate__();
+  var len = vals.length();
+  for (var i = 0; i < len; ++i) {
+    val = vals.get(i);
+    if (fn(val, i)) return val;
+  }
+};
+
+/**
+ * Return the last value when `fn(val, i)` is truthy,
+ * otherwise return `undefined`.
+ *
+ *    users.findLast(function(user){
+ *      return user.role == 'admin'
+ *    })
+ *
+ * @param {Function} fn
+ * @return {Mixed}
+ * @api public
+ */
+
+proto.findLast = function(fn){
+  fn = toFunction(fn);
+  var val;
+  var vals = this.__iterate__();
+  var len = vals.length();
+  for (var i = len - 1; i > -1; --i) {
+    val = vals.get(i);
+    if (fn(val, i)) return val;
+  }
+};
+
+/**
+ * Assert that all invocations of `fn(val, i)` are truthy.
+ *
+ * For example ensuring that all pets are ferrets:
+ *
+ *    pets.all(function(pet){
+ *      return pet.species == 'ferret'
+ *    })
+ *
+ *    users.all('admin')
+ *
+ * @param {Function|String} fn
+ * @return {Boolean}
+ * @api public
+ */
+
+proto.all =
+proto.every = function(fn){
+  fn = toFunction(fn);
+  var val;
+  var vals = this.__iterate__();
+  var len = vals.length();
+  for (var i = 0; i < len; ++i) {
+    val = vals.get(i);
+    if (!fn(val, i)) return false;
+  }
+  return true;
+};
+
+/**
+ * Assert that none of the invocations of `fn(val, i)` are truthy.
+ *
+ * For example ensuring that no pets are admins:
+ *
+ *    pets.none(function(p){ return p.admin })
+ *    pets.none('admin')
+ *
+ * @param {Function|String} fn
+ * @return {Boolean}
+ * @api public
+ */
+
+proto.none = function(fn){
+  fn = toFunction(fn);
+  var val;
+  var vals = this.__iterate__();
+  var len = vals.length();
+  for (var i = 0; i < len; ++i) {
+    val = vals.get(i);
+    if (fn(val, i)) return false;
+  }
+  return true;
+};
+
+/**
+ * Assert that at least one invocation of `fn(val, i)` is truthy.
+ *
+ * For example checking to see if any pets are ferrets:
+ *
+ *    pets.any(function(pet){
+ *      return pet.species == 'ferret'
+ *    })
+ *
+ * @param {Function} fn
+ * @return {Boolean}
+ * @api public
+ */
+
+proto.any = function(fn){
+  fn = toFunction(fn);
+  var val;
+  var vals = this.__iterate__();
+  var len = vals.length();
+  for (var i = 0; i < len; ++i) {
+    val = vals.get(i);
+    if (fn(val, i)) return true;
+  }
+  return false;
+};
+
+/**
+ * Count the number of times `fn(val, i)` returns true.
+ *
+ *    var n = pets.count(function(pet){
+ *      return pet.species == 'ferret'
+ *    })
+ *
+ * @param {Function} fn
+ * @return {Number}
+ * @api public
+ */
+
+proto.count = function(fn){
+  var val;
+  var vals = this.__iterate__();
+  var len = vals.length();
+  var n = 0;
+  for (var i = 0; i < len; ++i) {
+    val = vals.get(i);
+    if (fn(val, i)) ++n;
+  }
+  return n;
+};
+
+/**
+ * Determine the indexof `obj` or return `-1`.
+ *
+ * @param {Mixed} obj
+ * @return {Number}
+ * @api public
+ */
+
+proto.indexOf = function(obj){
+  var val;
+  var vals = this.__iterate__();
+  var len = vals.length();
+  for (var i = 0; i < len; ++i) {
+    val = vals.get(i);
+    if (val === obj) return i;
+  }
+  return -1;
+};
+
+/**
+ * Check if `obj` is present in this enumerable.
+ *
+ * @param {Mixed} obj
+ * @return {Boolean}
+ * @api public
+ */
+
+proto.has = function(obj){
+  return !! ~this.indexOf(obj);
+};
+
+/**
+ * Reduce with `fn(accumulator, val, i)` using
+ * optional `init` value defaulting to the first
+ * enumerable value.
+ *
+ * @param {Function} fn
+ * @param {Mixed} [val]
+ * @return {Mixed}
+ * @api public
+ */
+
+proto.reduce = function(fn, init){
+  var val;
+  var i = 0;
+  var vals = this.__iterate__();
+  var len = vals.length();
+
+  val = null == init
+    ? vals.get(i++)
+    : init;
+
+  for (; i < len; ++i) {
+    val = fn(val, vals.get(i), i);
+  }
+
+  return val;
+};
+
+/**
+ * Determine the max value.
+ *
+ * With a callback function:
+ *
+ *    pets.max(function(pet){
+ *      return pet.age
+ *    })
+ *
+ * With property strings:
+ *
+ *    pets.max('age')
+ *
+ * With immediate values:
+ *
+ *    nums.max()
+ *
+ * @param {Function|String} fn
+ * @return {Number}
+ * @api public
+ */
+
+proto.max = function(fn){
+  var val;
+  var n = 0;
+  var max = -Infinity;
+  var vals = this.__iterate__();
+  var len = vals.length();
+
+  if (fn) {
+    fn = toFunction(fn);
+    for (var i = 0; i < len; ++i) {
+      n = fn(vals.get(i), i);
+      max = n > max ? n : max;
+    }
+  } else {
+    for (var i = 0; i < len; ++i) {
+      n = vals.get(i);
+      max = n > max ? n : max;
+    }
+  }
+
+  return max;
+};
+
+/**
+ * Determine the min value.
+ *
+ * With a callback function:
+ *
+ *    pets.min(function(pet){
+ *      return pet.age
+ *    })
+ *
+ * With property strings:
+ *
+ *    pets.min('age')
+ *
+ * With immediate values:
+ *
+ *    nums.min()
+ *
+ * @param {Function|String} fn
+ * @return {Number}
+ * @api public
+ */
+
+proto.min = function(fn){
+  var val;
+  var n = 0;
+  var min = Infinity;
+  var vals = this.__iterate__();
+  var len = vals.length();
+
+  if (fn) {
+    fn = toFunction(fn);
+    for (var i = 0; i < len; ++i) {
+      n = fn(vals.get(i), i);
+      min = n < min ? n : min;
+    }
+  } else {
+    for (var i = 0; i < len; ++i) {
+      n = vals.get(i);
+      min = n < min ? n : min;
+    }
+  }
+
+  return min;
+};
+
+/**
+ * Determine the sum.
+ *
+ * With a callback function:
+ *
+ *    pets.sum(function(pet){
+ *      return pet.age
+ *    })
+ *
+ * With property strings:
+ *
+ *    pets.sum('age')
+ *
+ * With immediate values:
+ *
+ *    nums.sum()
+ *
+ * @param {Function|String} fn
+ * @return {Number}
+ * @api public
+ */
+
+proto.sum = function(fn){
+  var ret;
+  var n = 0;
+  var vals = this.__iterate__();
+  var len = vals.length();
+
+  if (fn) {
+    fn = toFunction(fn);
+    for (var i = 0; i < len; ++i) {
+      n += fn(vals.get(i), i);
+    }
+  } else {
+    for (var i = 0; i < len; ++i) {
+      n += vals.get(i);
+    }
+  }
+
+  return n;
+};
+
+/**
+ * Determine the average value.
+ *
+ * With a callback function:
+ *
+ *    pets.avg(function(pet){
+ *      return pet.age
+ *    })
+ *
+ * With property strings:
+ *
+ *    pets.avg('age')
+ *
+ * With immediate values:
+ *
+ *    nums.avg()
+ *
+ * @param {Function|String} fn
+ * @return {Number}
+ * @api public
+ */
+
+proto.avg =
+proto.mean = function(fn){
+  var ret;
+  var n = 0;
+  var vals = this.__iterate__();
+  var len = vals.length();
+
+  if (fn) {
+    fn = toFunction(fn);
+    for (var i = 0; i < len; ++i) {
+      n += fn(vals.get(i), i);
+    }
+  } else {
+    for (var i = 0; i < len; ++i) {
+      n += vals.get(i);
+    }
+  }
+
+  return n / len;
+};
+
+/**
+ * Return the first value, or first `n` values.
+ *
+ * @param {Number|Function} [n]
+ * @return {Array|Mixed}
+ * @api public
+ */
+
+proto.first = function(n){
+  if ('function' == typeof n) return this.find(n);
+  var vals = this.__iterate__();
+
+  if (n) {
+    var len = Math.min(n, vals.length());
+    var arr = new Array(len);
+    for (var i = 0; i < len; ++i) {
+      arr[i] = vals.get(i);
+    }
+    return arr;
+  }
+
+  return vals.get(0);
+};
+
+/**
+ * Return the last value, or last `n` values.
+ *
+ * @param {Number|Function} [n]
+ * @return {Array|Mixed}
+ * @api public
+ */
+
+proto.last = function(n){
+  if ('function' == typeof n) return this.findLast(n);
+  var vals = this.__iterate__();
+  var len = vals.length();
+
+  if (n) {
+    var i = Math.max(0, len - n);
+    var arr = [];
+    for (; i < len; ++i) {
+      arr.push(vals.get(i));
+    }
+    return arr;
+  }
+
+  return vals.get(len - 1);
+};
+
+/**
+ * Return values in groups of `n`.
+ *
+ * @param {Number} n
+ * @return {Enumerable}
+ * @api public
+ */
+
+proto.inGroupsOf = function(n){
+  var arr = [];
+  var group = [];
+  var vals = this.__iterate__();
+  var len = vals.length();
+
+  for (var i = 0; i < len; ++i) {
+    group.push(vals.get(i));
+    if ((i + 1) % n == 0) {
+      arr.push(group);
+      group = [];
+    }
+  }
+
+  if (group.length) arr.push(group);
+
+  return new Enumerable(arr);
+};
+
+/**
+ * Return the value at the given index.
+ *
+ * @param {Number} i
+ * @return {Mixed}
+ * @api public
+ */
+
+proto.at = function(i){
+  return this.__iterate__().get(i);
+};
+
+/**
+ * Return a regular `Array`.
+ *
+ * @return {Array}
+ * @api public
+ */
+
+proto.toJSON =
+proto.array = function(){
+  var arr = [];
+  var vals = this.__iterate__();
+  var len = vals.length();
+  for (var i = 0; i < len; ++i) {
+    arr.push(vals.get(i));
+  }
+  return arr;
+};
+
+/**
+ * Return the enumerable value.
+ *
+ * @return {Mixed}
+ * @api public
+ */
+
+proto.value = function(){
+  return this.obj;
+};
+
+/**
+ * Mixin enumerable.
+ */
+
+mixin(Enumerable.prototype);
+
+});
+require.register("component-collection/index.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var Enumerable = require('enumerable');
+
+/**
+ * Expose `Collection`.
+ */
+
+module.exports = Collection;
+
+/**
+ * Initialize a new collection with the given `models`.
+ *
+ * @param {Array} models
+ * @api public
+ */
+
+function Collection(models) {
+  this.models = models || [];
+}
+
+/**
+ * Mixin enumerable.
+ */
+
+Enumerable(Collection.prototype);
+
+/**
+ * Iterator implementation.
+ */
+
+Collection.prototype.__iterate__ = function(){
+  var self = this;
+  return {
+    length: function(){ return self.length() },
+    get: function(i){ return self.models[i] }
+  }
+};
+
+/**
+ * Return the collection length.
+ *
+ * @return {Number}
+ * @api public
+ */
+
+Collection.prototype.length = function(){
+  return this.models.length;
+};
+
+/**
+ * Add `model` to the collection and return the index.
+ *
+ * @param {Object} model
+ * @return {Number}
+ * @api public
+ */
+
+Collection.prototype.push = function(model){
+  return this.models.push(model);
+};
+
+});
+require.register("component-model/lib/index.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var proto = require('./proto');
+var statics = require('./static');
+var Emitter = require('emitter');
+
+/**
+ * Expose `createModel`.
+ */
+
+module.exports = createModel;
+
+/**
+ * Create a new model constructor with the given `name`.
+ *
+ * @param {String} name
+ * @return {Function}
+ * @api public
+ */
+
+function createModel(name) {
+  if ('string' != typeof name) throw new TypeError('model name required');
+
+  /**
+   * Initialize a new model with the given `attrs`.
+   *
+   * @param {Object} attrs
+   * @api public
+   */
+
+  function model(attrs) {
+    if (!(this instanceof model)) return new model(attrs);
+    attrs = attrs || {};
+    this._callbacks = {};
+    this.attrs = attrs;
+    this.dirty = attrs;
+    this.model.emit('construct', this, attrs);
+  }
+
+  // mixin emitter
+
+  Emitter(model);
+
+  // statics
+
+  model.modelName = name;
+  model._base = '/' + name.toLowerCase() + 's';
+  model.attrs = {};
+  model.validators = [];
+  model._headers = {};
+  for (var key in statics) model[key] = statics[key];
+
+  // prototype
+
+  model.prototype = {};
+  model.prototype.model = model;
+  for (var key in proto) model.prototype[key] = proto[key];
+
+  return model;
+}
+
+
+});
+require.register("component-model/lib/static.js", function(exports, require, module){
+/**
+ * Module dependencies.
+ */
+
+var Collection = require('collection');
+var request = require('superagent');
+var noop = function(){};
+
+/**
+ * Expose request for configuration
+ */
+
+exports.request = request;
+
+/**
+ * Construct a url to the given `path`.
+ *
+ * Example:
+ *
+ *    User.url('add')
+ *    // => "/users/add"
+ *
+ * @param {String} path
+ * @return {String}
+ * @api public
+ */
+
+exports.url = function(path){
+  var url = this._base;
+  if (0 == arguments.length) return url;
+  return url + '/' + path;
+};
+
+/**
+ * Set base path for urls.
+ * Note this is defaulted to '/' + modelName.toLowerCase() + 's'
+ *
+ * Example:
+ *
+ *   User.route('/api/u')
+ *
+ * @param {String} path 
+ * @return {Function} self
+ * @api public
+ */
+
+exports.route = function(path){
+  this._base = path;
+  return this;
+}
+
+/**
+ * Add custom http headers to all requests.
+ *
+ * Example:
+ *
+ *   User.headers({
+ *    'X-CSRF-Token': 'some token',
+ *    'X-API-Token': 'api token 
+ *   });
+ *
+ * @param {String|Object} header(s)
+ * @param {String} value
+ * @return {Function} self
+ * @api public
+ */
+
+exports.headers = function(headers){
+  for(var i in headers){
+    this._headers[i] = headers[i];
+  }
+  return this;
+};
+
+/**
+ * Add validation `fn()`.
+ *
+ * @param {Function} fn
+ * @return {Function} self
+ * @api public
+ */
+
+exports.validate = function(fn){
+  this.validators.push(fn);
+  return this;
+};
+
+/**
+ * Use the given plugin `fn()`.
+ *
+ * @param {Function} fn
+ * @return {Function} self
+ * @api public
+ */
+
+exports.use = function(fn){
+  fn(this);
+  return this;
+};
+
+/**
+ * Define attr with the given `name` and `options`.
+ *
+ * @param {String} name
+ * @param {Object} options
+ * @return {Function} self
+ * @api public
+ */
+
+exports.attr = function(name, options){
+  this.attrs[name] = options || {};
+
+  // implied pk
+  if ('_id' == name || 'id' == name) {
+    this.attrs[name].primaryKey = true;
+    this.primaryKey = name;
+  }
+
+  // getter / setter method
+  this.prototype[name] = function(val){
+    if (0 == arguments.length) return this.attrs[name];
+    var prev = this.attrs[name];
+    this.dirty[name] = val;
+    this.attrs[name] = val;
+    this.model.emit('change', this, name, val, prev);
+    this.model.emit('change ' + name, this, val, prev);
+    this.emit('change', name, val, prev);
+    this.emit('change ' + name, val, prev);
+    return this;
+  };
+
+  return this;
+};
+
+/**
+ * Remove all and invoke `fn(err)`.
+ *
+ * @param {Function} [fn]
+ * @api public
+ */
+
+exports.destroyAll = function(fn){
+  fn = fn || noop;
+  var self = this;
+  var url = this.url('');
+  this.request
+    .del(url)
+    .set(this._headers)
+    .end(function(res){
+      if (res.error) return fn(error(res), null, res);
+      fn(null, [], res);
+    });
+};
+
+/**
+ * Get all and invoke `fn(err, array)`.
+ *
+ * @param {Function} fn
+ * @api public
+ */
+
+exports.all = function(fn){
+  var self = this;
+  var url = this.url('');
+  this.request
+    .get(url)
+    .set(this._headers)
+    .end(function(res){
+      if (res.error) return fn(error(res), null, res);
+      var col = new Collection;
+      for (var i = 0, len = res.body.length; i < len; ++i) {
+        col.push(new self(res.body[i]));
+      }
+      fn(null, col, res);
+    });
+};
+
+/**
+ * Get `id` and invoke `fn(err, model)`.
+ *
+ * @param {Mixed} id
+ * @param {Function} fn
+ * @api public
+ */
+
+exports.get = function(id, fn){
+  var self = this;
+  var url = this.url(id);
+  this.request
+    .get(url)
+    .set(this._headers)
+    .end(function(res){
+      if (res.error) return fn(error(res), null, res);
+      var model = new self(res.body);
+      fn(null, model, res);
+    });
+};
+
+/**
+ * Response error helper.
+ *
+ * @param {Response} er
+ * @return {Error}
+ * @api private
+ */
+
+function error(res) {
+  return new Error('got ' + res.status + ' response');
+}
+
+});
+require.register("component-model/lib/proto.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var Emitter = require('emitter');
+var request = require('superagent');
+var each = require('each');
+var noop = function(){};
+
+/**
+ * Mixin emitter.
+ */
+
+Emitter(exports);
+
+/**
+ * Expose request for configuration
+ */
+exports.request = request;
+
+/**
+ * Register an error `msg` on `attr`.
+ *
+ * @param {String} attr
+ * @param {String} msg
+ * @return {Object} self
+ * @api public
+ */
+
+exports.error = function(attr, msg){
+  this.errors.push({
+    attr: attr,
+    message: msg
+  });
+  return this;
+};
+
+/**
+ * Check if this model is new.
+ *
+ * @return {Boolean}
+ * @api public
+ */
+
+exports.isNew = function(){
+  var key = this.model.primaryKey;
+  return ! this.has(key);
+};
+
+/**
+ * Get / set the primary key.
+ *
+ * @param {Mixed} val
+ * @return {Mixed}
+ * @api public
+ */
+
+exports.primary = function(val){
+  var key = this.model.primaryKey;
+  if (0 == arguments.length) return this[key]();
+  return this[key](val);
+};
+
+/**
+ * Validate the model and return a boolean.
+ *
+ * Example:
+ *
+ *    user.isValid()
+ *    // => false
+ *
+ *    user.errors
+ *    // => [{ attr: ..., message: ... }]
+ *
+ * @return {Boolean}
+ * @api public
+ */
+
+exports.isValid = function(){
+  this.validate();
+  return 0 == this.errors.length;
+};
+
+/**
+ * Return `false` or an object
+ * containing the "dirty" attributes.
+ *
+ * Optionally check for a specific `attr`.
+ *
+ * @param {String} [attr]
+ * @return {Object|Boolean}
+ * @api public
+ */
+
+exports.changed = function(attr){
+  var dirty = this.dirty;
+  if (Object.keys(dirty).length) {
+    if (attr) return !! dirty[attr];
+    return dirty;
+  }
+  return false;
+};
+
+/**
+ * Perform validations.
+ *
+ * @api private
+ */
+
+exports.validate = function(){
+  var self = this;
+  var fns = this.model.validators;
+  this.errors = [];
+  each(fns, function(fn){ fn(self) });
+};
+
+/**
+ * Destroy the model and mark it as `.destroyed`
+ * and invoke `fn(err)`.
+ *
+ * Events:
+ *
+ *  - `destroying` before deletion
+ *  - `destroy` on deletion
+ *
+ * @param {Function} [fn]
+ * @api public
+ */
+
+exports.destroy = function(fn){
+  fn = fn || noop;
+  if (this.isNew()) return fn(new Error('not saved'));
+  var self = this;
+  var url = this.url();
+  this.model.emit('destroying', this);
+  this.emit('destroying');
+  this.request
+    .del(url)
+    .set(this.model._headers)
+    .end(function(res){
+      if (res.error) return fn(error(res), res);
+      self.destroyed = true;
+      self.model.emit('destroy', self, res);
+      self.emit('destroy');
+      fn(null, res);
+    });
+};
+
+/**
+ * Save and invoke `fn(err)`.
+ *
+ * Events:
+ *
+ *  - `saving` pre-update or save, after validation
+ *  - `save` on updates and saves
+ *
+ * @param {Function} [fn]
+ * @api public
+ */
+
+exports.save = function(fn){
+  if (!this.isNew()) return this.update(fn);
+  var self = this;
+  var url = this.model.url();
+  var key = this.model.primaryKey;
+  fn = fn || noop;
+  if (!this.isValid()) return fn(new Error('validation failed'));
+  this.model.emit('saving', this);
+  this.emit('saving');
+  this.request
+    .post(url)
+    .set(this.model._headers)
+    .send(self)
+    .end(function(res){
+      if (res.error) return fn(error(res), res);
+      if (res.body) self.primary(res.body[key]);
+      self.dirty = {};
+      self.model.emit('save', self, res);
+      self.emit('save');
+      fn(null, res);
+    });
+};
+
+/**
+ * Update and invoke `fn(err)`.
+ *
+ * @param {Function} [fn]
+ * @api private
+ */
+
+exports.update = function(fn){
+  var self = this;
+  var url = this.url();
+  fn = fn || noop;
+  if (!this.isValid()) return fn(new Error('validation failed'));
+  this.model.emit('saving', this);
+  this.emit('saving');
+  this.request
+    .put(url)
+    .set(this.model._headers)
+    .send(self)
+    .end(function(res){
+      if (res.error) return fn(error(res), res);
+      self.dirty = {};
+      self.model.emit('save', self, res);
+      self.emit('save');
+      fn(null, res);
+    });
+};
+
+/**
+ * Return a url for `path` relative to this model.
+ *
+ * Example:
+ *
+ *    var user = new User({ id: 5 });
+ *    user.url('edit');
+ *    // => "/users/5/edit"
+ *
+ * @param {String} path
+ * @return {String}
+ * @api public
+ */
+
+exports.url = function(path){
+  var model = this.model;
+  var url = model._base;
+  var id = this.primary();
+  if (0 == arguments.length) return url + '/' + id;
+  return url + '/' + id + '/' + path;
+};
+
+/**
+ * Set multiple `attrs`.
+ *
+ * @param {Object} attrs
+ * @return {Object} self
+ * @api public
+ */
+
+exports.set = function(attrs){
+  for (var key in attrs) {
+    this[key](attrs[key]);
+  }
+  return this;
+};
+
+/**
+ * Get `attr` value.
+ *
+ * @param {String} attr
+ * @return {Mixed}
+ * @api public
+ */
+
+exports.get = function(attr){
+  return this.attrs[attr];
+};
+
+/**
+ * Check if `attr` is present (not `null` or `undefined`).
+ *
+ * @param {String} attr
+ * @return {Boolean}
+ * @api public
+ */
+
+exports.has = function(attr){
+  return null != this.attrs[attr];
+};
+
+/**
+ * Return the JSON representation of the model.
+ *
+ * @return {Object}
+ * @api public
+ */
+
+exports.toJSON = function(){
+  return this.attrs;
+};
+
+/**
+ * Response error helper.
+ *
+ * @param {Response} er
+ * @return {Error}
+ * @api private
+ */
+
+function error(res) {
+  return new Error('got ' + res.status + ' response');
+}
+
+});
+require.register("heavyk-format/index.js", function(exports, require, module){
+//
+// format, printf-like string formatting for JavaScript
+// github.com/samsonjs/format
+//
+// Copyright 2010 - 2011 Sami Samhuri <sami@samhuri.net>
+// ISC license
+//
+
+exports.printf = function(/* ... */) {
+    console.log(exports.format.apply(this, arguments));
+};
+
+exports.format = function(format) {
+    var argIndex = 1 // skip initial format argument
+      , args = [].slice.call(arguments)
+      , i = 0
+      , n = format.length
+      , result = ''
+      , c
+      , escaped = false
+      , arg
+      , precision
+      , nextArg = function() { return args[argIndex++]; }
+      , slurpNumber = function() {
+              var digits = '';
+              while (format[i].match(/\d/))
+                  digits += format[i++];
+              return digits.length > 0 ? parseInt(digits) : null;
+          }
+      ;
+    for (; i < n; ++i) {
+        c = format[i];
+        if (escaped) {
+            escaped = false;
+            precision = slurpNumber();
+            switch (c) {
+            case 'b': // number in binary
+                result += parseInt(nextArg(), 10).toString(2);
+                break;
+            case 'c': // character
+                arg = nextArg();
+                if (typeof arg === 'string' || arg instanceof String)
+                    result += arg;
+                else
+                    result += String.fromCharCode(parseInt(arg, 10));
+                break;
+            case 'd': // number in decimal
+                result += parseInt(nextArg(), 10);
+                break;
+            case 'f': // floating point number
+                result += parseFloat(nextArg()).toFixed(precision || 6);
+                break;
+            case 'o': // number in octal
+                result += '0' + parseInt(nextArg(), 10).toString(8);
+                break;
+            case 's': // string
+                result += nextArg();
+                break;
+            case 'x': // lowercase hexadecimal
+                result += '0x' + parseInt(nextArg(), 10).toString(16);
+                break;
+            case 'X': // uppercase hexadecimal
+                result += '0x' + parseInt(nextArg(), 10).toString(16).toUpperCase();
+                break;
+            default:
+                result += c;
+                break;
+            }
+        } else if (c === '%') {
+            escaped = true;
+        } else {
+            result += c;
+        }
+    }
+    return result;
+};
+
+exports.vsprintf = function(format, replacements) {
+    return exports.format.apply(this, [format].concat(replacements));
+};
+
+exports.sprintf = exports.format;
+
+});
+require.register("visionmedia-page.js/index.js", function(exports, require, module){
+
+;(function(){
+
+  /**
+   * Perform initial dispatch.
+   */
+
+  var dispatch = true;
+
+  /**
+   * Base path.
+   */
+
+  var base = '';
+
+  /**
+   * Running flag.
+   */
+
+  var running;
+
+  /**
+   * Register `path` with callback `fn()`,
+   * or route `path`, or `page.start()`.
+   *
+   *   page(fn);
+   *   page('*', fn);
+   *   page('/user/:id', load, user);
+   *   page('/user/' + user.id, { some: 'thing' });
+   *   page('/user/' + user.id);
+   *   page();
+   *
+   * @param {String|Function} path
+   * @param {Function} fn...
+   * @api public
+   */
+
+  function page(path, fn) {
+    // <callback>
+    if ('function' == typeof path) {
+      return page('*', path);
+    }
+
+    // route <path> to <callback ...>
+    if ('function' == typeof fn) {
+      var route = new Route(path);
+      for (var i = 1; i < arguments.length; ++i) {
+        page.callbacks.push(route.middleware(arguments[i]));
+      }
+    // show <path> with [state]
+    } else if ('string' == typeof path) {
+      page.show(path, fn);
+    // start [options]
+    } else {
+      page.start(path);
+    }
+  }
+
+  /**
+   * Callback functions.
+   */
+
+  page.callbacks = [];
+
+  /**
+   * Get or set basepath to `path`.
+   *
+   * @param {String} path
+   * @api public
+   */
+
+  page.base = function(path){
+    if (0 == arguments.length) return base;
+    base = path;
+  };
+
+  /**
+   * Bind with the given `options`.
+   *
+   * Options:
+   *
+   *    - `click` bind to click events [true]
+   *    - `popstate` bind to popstate [true]
+   *    - `dispatch` perform initial dispatch [true]
+   *
+   * @param {Object} options
+   * @api public
+   */
+
+  page.start = function(options){
+    options = options || {};
+    if (running) return;
+    running = true;
+    if (false === options.dispatch) dispatch = false;
+    if (false !== options.popstate) window.addEventListener('popstate', onpopstate, false);
+    if (false !== options.click) window.addEventListener('click', onclick, false);
+    if (!dispatch) return;
+    var url = location.pathname + location.search + location.hash;
+    page.replace(url, null, true, dispatch);
+  };
+
+  /**
+   * Unbind click and popstate event handlers.
+   *
+   * @api public
+   */
+
+  page.stop = function(){
+    running = false;
+    removeEventListener('click', onclick, false);
+    removeEventListener('popstate', onpopstate, false);
+  };
+
+  /**
+   * Show `path` with optional `state` object.
+   *
+   * @param {String} path
+   * @param {Object} state
+   * @param {Boolean} dispatch
+   * @return {Context}
+   * @api public
+   */
+
+  page.show = function(path, state, dispatch){
+    var ctx = new Context(path, state);
+    if (false !== dispatch) page.dispatch(ctx);
+    if (!ctx.unhandled) ctx.pushState();
+    return ctx;
+  };
+
+  /**
+   * Replace `path` with optional `state` object.
+   *
+   * @param {String} path
+   * @param {Object} state
+   * @return {Context}
+   * @api public
+   */
+
+  page.replace = function(path, state, init, dispatch){
+    var ctx = new Context(path, state);
+    ctx.init = init;
+    if (null == dispatch) dispatch = true;
+    if (dispatch) page.dispatch(ctx);
+    ctx.save();
+    return ctx;
+  };
+
+  /**
+   * Dispatch the given `ctx`.
+   *
+   * @param {Object} ctx
+   * @api private
+   */
+
+  page.dispatch = function(ctx){
+    var i = 0;
+
+    function next() {
+      var fn = page.callbacks[i++];
+      if (!fn) return unhandled(ctx);
+      fn(ctx, next);
+    }
+
+    next();
+  };
+
+  /**
+   * Unhandled `ctx`. When it's not the initial
+   * popstate then redirect. If you wish to handle
+   * 404s on your own use `page('*', callback)`.
+   *
+   * @param {Context} ctx
+   * @api private
+   */
+
+  function unhandled(ctx) {
+    var current = window.location.pathname + window.location.search;
+    if (current == ctx.canonicalPath) return;
+    page.stop();
+    ctx.unhandled = true;
+    window.location = ctx.canonicalPath;
+  }
+
+  /**
+   * Initialize a new "request" `Context`
+   * with the given `path` and optional initial `state`.
+   *
+   * @param {String} path
+   * @param {Object} state
+   * @api public
+   */
+
+  function Context(path, state) {
+    if ('/' == path[0] && 0 != path.indexOf(base)) path = base + path;
+    var i = path.indexOf('?');
+
+    this.canonicalPath = path;
+    this.path = path.replace(base, '') || '/';
+
+    this.title = document.title;
+    this.state = state || {};
+    this.state.path = path;
+    this.querystring = ~i ? path.slice(i + 1) : '';
+    this.pathname = ~i ? path.slice(0, i) : path;
+    this.params = [];
+
+    // fragment
+    this.hash = '';
+    if (!~this.path.indexOf('#')) return;
+    var parts = this.path.split('#');
+    this.path = parts[0];
+    this.hash = parts[1] || '';
+    this.querystring = this.querystring.split('#')[0];
+  }
+
+  /**
+   * Expose `Context`.
+   */
+
+  page.Context = Context;
+
+  /**
+   * Push state.
+   *
+   * @api private
+   */
+
+  Context.prototype.pushState = function(){
+    history.pushState(this.state, this.title, this.canonicalPath);
+  };
+
+  /**
+   * Save the context state.
+   *
+   * @api public
+   */
+
+  Context.prototype.save = function(){
+    history.replaceState(this.state, this.title, this.canonicalPath);
+  };
+
+  /**
+   * Initialize `Route` with the given HTTP `path`,
+   * and an array of `callbacks` and `options`.
+   *
+   * Options:
+   *
+   *   - `sensitive`    enable case-sensitive routes
+   *   - `strict`       enable strict matching for trailing slashes
+   *
+   * @param {String} path
+   * @param {Object} options.
+   * @api private
+   */
+
+  function Route(path, options) {
+    options = options || {};
+    this.path = path;
+    this.method = 'GET';
+    this.regexp = pathtoRegexp(path
+      , this.keys = []
+      , options.sensitive
+      , options.strict);
+  }
+
+  /**
+   * Expose `Route`.
+   */
+
+  page.Route = Route;
+
+  /**
+   * Return route middleware with
+   * the given callback `fn()`.
+   *
+   * @param {Function} fn
+   * @return {Function}
+   * @api public
+   */
+
+  Route.prototype.middleware = function(fn){
+    var self = this;
+    return function(ctx, next){
+      if (self.match(ctx.path, ctx.params)) return fn(ctx, next);
+      next();
+    };
+  };
+
+  /**
+   * Check if this route matches `path`, if so
+   * populate `params`.
+   *
+   * @param {String} path
+   * @param {Array} params
+   * @return {Boolean}
+   * @api private
+   */
+
+  Route.prototype.match = function(path, params){
+    var keys = this.keys
+      , qsIndex = path.indexOf('?')
+      , pathname = ~qsIndex ? path.slice(0, qsIndex) : path
+      , m = this.regexp.exec(pathname);
+
+    if (!m) return false;
+
+    for (var i = 1, len = m.length; i < len; ++i) {
+      var key = keys[i - 1];
+
+      var val = 'string' == typeof m[i]
+        ? decodeURIComponent(m[i])
+        : m[i];
+
+      if (key) {
+        params[key.name] = undefined !== params[key.name]
+          ? params[key.name]
+          : val;
+      } else {
+        params.push(val);
+      }
+    }
+
+    return true;
+  };
+
+  /**
+   * Normalize the given path string,
+   * returning a regular expression.
+   *
+   * An empty array should be passed,
+   * which will contain the placeholder
+   * key names. For example "/user/:id" will
+   * then contain ["id"].
+   *
+   * @param  {String|RegExp|Array} path
+   * @param  {Array} keys
+   * @param  {Boolean} sensitive
+   * @param  {Boolean} strict
+   * @return {RegExp}
+   * @api private
+   */
+
+  function pathtoRegexp(path, keys, sensitive, strict) {
+    if (path instanceof RegExp) return path;
+    if (path instanceof Array) path = '(' + path.join('|') + ')';
+    path = path
+      .concat(strict ? '' : '/?')
+      .replace(/\/\(/g, '(?:/')
+      .replace(/(\/)?(\.)?:(\w+)(?:(\(.*?\)))?(\?)?/g, function(_, slash, format, key, capture, optional){
+        keys.push({ name: key, optional: !! optional });
+        slash = slash || '';
+        return ''
+          + (optional ? '' : slash)
+          + '(?:'
+          + (optional ? slash : '')
+          + (format || '') + (capture || (format && '([^/.]+?)' || '([^/]+?)')) + ')'
+          + (optional || '');
+      })
+      .replace(/([\/.])/g, '\\$1')
+      .replace(/\*/g, '(.*)');
+    return new RegExp('^' + path + '$', sensitive ? '' : 'i');
+  }
+
+  /**
+   * Handle "populate" events.
+   */
+
+  function onpopstate(e) {
+    if (e.state) {
+      var path = e.state.path;
+      page.replace(path, e.state);
+    }
+  }
+
+  /**
+   * Handle "click" events.
+   */
+
+  function onclick(e) {
+    if (1 != which(e)) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    if (e.defaultPrevented) return;
+
+    // ensure link
+    var el = e.target;
+    while (el && 'A' != el.nodeName) el = el.parentNode;
+    if (!el || 'A' != el.nodeName) return;
+
+    // ensure non-hash for the same path
+    var link = el.getAttribute('href');
+    if (el.pathname == location.pathname && (el.hash || '#' == link)) return;
+
+    // check target
+    if (el.target) return;
+
+    // x-origin
+    if (!sameOrigin(el.href)) return;
+
+    // rebuild path
+    var path = el.pathname + el.search + (el.hash || '');
+
+    // same page
+    var orig = path + el.hash;
+
+    path = path.replace(base, '');
+    if (base && orig == path) return;
+
+    e.preventDefault();
+    page.show(orig);
+  }
+
+  /**
+   * Event button.
+   */
+
+  function which(e) {
+    e = e || window.event;
+    return null == e.which
+      ? e.button
+      : e.which;
+  }
+
+  /**
+   * Check if `href` is the same origin.
+   */
+
+  function sameOrigin(href) {
+    var origin = location.protocol + '//' + location.hostname;
+    if (location.port) origin += ':' + location.port;
+    return 0 == href.indexOf(origin);
+  }
+
+  /**
+   * Expose `page`.
+   */
+
+  if ('undefined' == typeof module) {
+    window.page = page;
+  } else {
+    module.exports = page;
+  }
+
+})();
 
 });
 require.register("RedVentures-reduce/index.js", function(exports, require, module){
@@ -3263,22 +5004,1338 @@ request.put = function(url, data, fn){
 module.exports = request;
 
 });
+require.register("component-format-parser/index.js", function(exports, require, module){
+
+/**
+ * Parse the given format `str`.
+ *
+ * @param {String} str
+ * @return {Array}
+ * @api public
+ */
+
+module.exports = function(str){
+	return str.split(/ *\| */).map(function(call){
+		var parts = call.split(':');
+		var name = parts.shift();
+		var args = parseArgs(parts.join(':'));
+
+		return {
+			name: name,
+			args: args
+		};
+	});
+};
+
+/**
+ * Parse args `str`.
+ *
+ * @param {String} str
+ * @return {Array}
+ * @api private
+ */
+
+function parseArgs(str) {
+	var args = [];
+	var re = /"([^"]*)"|'([^']*)'|([^ \t,]+)/g;
+	var m;
+	
+	while (m = re.exec(str)) {
+		args.push(m[2] || m[1] || m[0]);
+	}
+	
+	return args;
+}
+
+});
+require.register("component-props/index.js", function(exports, require, module){
+
+/**
+ * Return immediate identifiers parsed from `str`.
+ *
+ * @param {String} str
+ * @return {Array}
+ * @api public
+ */
+
+module.exports = function(str, prefix){
+  var p = unique(props(str));
+  if (prefix) return prefixed(str, p, prefix);
+  return p;
+};
+
+/**
+ * Return immediate identifiers in `str`.
+ *
+ * @param {String} str
+ * @return {Array}
+ * @api private
+ */
+
+function props(str) {
+  return str
+    .replace(/\.\w+|\w+ *\(|"[^"]*"|'[^']*'|\/([^/]+)\//g, '')
+    .match(/[a-zA-Z_]\w*/g)
+    || [];
+}
+
+/**
+ * Return `str` with `props` prefixed with `prefix`.
+ *
+ * @param {String} str
+ * @param {Array} props
+ * @param {String} prefix
+ * @return {String}
+ * @api private
+ */
+
+function prefixed(str, props, prefix) {
+  var re = /\.\w+|\w+ *\(|"[^"]*"|'[^']*'|\/([^/]+)\/|[a-zA-Z_]\w*/g;
+  return str.replace(re, function(_){
+    if ('(' == _[_.length - 1]) return prefix + _;
+    if (!~props.indexOf(_)) return _;
+    return prefix + _;
+  });
+}
+
+/**
+ * Return unique array.
+ *
+ * @param {Array} arr
+ * @return {Array}
+ * @api private
+ */
+
+function unique(arr) {
+  var ret = [];
+
+  for (var i = 0; i < arr.length; i++) {
+    if (~ret.indexOf(arr[i])) continue;
+    ret.push(arr[i]);
+  }
+
+  return ret;
+}
+
+});
+require.register("visionmedia-debug/index.js", function(exports, require, module){
+if ('undefined' == typeof window) {
+  module.exports = require('./lib/debug');
+} else {
+  module.exports = require('./debug');
+}
+
+});
+require.register("visionmedia-debug/debug.js", function(exports, require, module){
+
+/**
+ * Expose `debug()` as the module.
+ */
+
+module.exports = debug;
+
+/**
+ * Create a debugger with the given `name`.
+ *
+ * @param {String} name
+ * @return {Type}
+ * @api public
+ */
+
+function debug(name) {
+  if (!debug.enabled(name)) return function(){};
+
+  return function(fmt){
+    fmt = coerce(fmt);
+
+    var curr = new Date;
+    var ms = curr - (debug[name] || curr);
+    debug[name] = curr;
+
+    fmt = name
+      + ' '
+      + fmt
+      + ' +' + debug.humanize(ms);
+
+    // This hackery is required for IE8
+    // where `console.log` doesn't have 'apply'
+    window.console
+      && console.log
+      && Function.prototype.apply.call(console.log, console, arguments);
+  }
+}
+
+/**
+ * The currently active debug mode names.
+ */
+
+debug.names = [];
+debug.skips = [];
+
+/**
+ * Enables a debug mode by name. This can include modes
+ * separated by a colon and wildcards.
+ *
+ * @param {String} name
+ * @api public
+ */
+
+debug.enable = function(name) {
+  try {
+    localStorage.debug = name;
+  } catch(e){}
+
+  var split = (name || '').split(/[\s,]+/)
+    , len = split.length;
+
+  for (var i = 0; i < len; i++) {
+    name = split[i].replace('*', '.*?');
+    if (name[0] === '-') {
+      debug.skips.push(new RegExp('^' + name.substr(1) + '$'));
+    }
+    else {
+      debug.names.push(new RegExp('^' + name + '$'));
+    }
+  }
+};
+
+/**
+ * Disable debug output.
+ *
+ * @api public
+ */
+
+debug.disable = function(){
+  debug.enable('');
+};
+
+/**
+ * Humanize the given `ms`.
+ *
+ * @param {Number} m
+ * @return {String}
+ * @api private
+ */
+
+debug.humanize = function(ms) {
+  var sec = 1000
+    , min = 60 * 1000
+    , hour = 60 * min;
+
+  if (ms >= hour) return (ms / hour).toFixed(1) + 'h';
+  if (ms >= min) return (ms / min).toFixed(1) + 'm';
+  if (ms >= sec) return (ms / sec | 0) + 's';
+  return ms + 'ms';
+};
+
+/**
+ * Returns true if the given mode name is enabled, false otherwise.
+ *
+ * @param {String} name
+ * @return {Boolean}
+ * @api public
+ */
+
+debug.enabled = function(name) {
+  for (var i = 0, len = debug.skips.length; i < len; i++) {
+    if (debug.skips[i].test(name)) {
+      return false;
+    }
+  }
+  for (var i = 0, len = debug.names.length; i < len; i++) {
+    if (debug.names[i].test(name)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * Coerce `val`.
+ */
+
+function coerce(val) {
+  if (val instanceof Error) return val.stack || val.message;
+  return val;
+}
+
+// persist
+
+try {
+  if (window.localStorage) debug.enable(localStorage.debug);
+} catch(e){}
+
+});
+require.register("component-reactive/lib/index.js", function(exports, require, module){
+/**
+ * Module dependencies.
+ */
+
+var adapter = require('./adapter');
+var AttrBinding = require('./attr-binding');
+var TextBinding = require('./text-binding');
+var debug = require('debug')('reactive');
+var bindings = require('./bindings');
+var Binding = require('./binding');
+var utils = require('./utils');
+var query = require('query');
+
+/**
+ * Expose `Reactive`.
+ */
+
+exports = module.exports = Reactive;
+
+/**
+ * Bindings.
+ */
+
+exports.bindings = {};
+
+/**
+ * Define subscription function.
+ *
+ * @param {Function} fn
+ * @api public
+ */
+
+exports.subscribe = function(fn){
+  adapter.subscribe = fn;
+};
+
+/**
+ * Define unsubscribe function.
+ *
+ * @param {Function} fn
+ * @api public
+ */
+
+exports.unsubscribe = function(fn){
+  adapter.unsubscribe = fn;
+};
+
+/**
+ * Define a get function.
+ *
+ * @param {Function} fn
+ * @api public
+ */
+
+exports.get = function(fn) {
+  adapter.get = fn;
+};
+
+/**
+ * Define a set function.
+ *
+ * @param {Function} fn
+ * @api public
+ */
+
+exports.set = function(fn) {
+  adapter.set = fn;
+};
+
+/**
+ * Expose adapter
+ */
+
+exports.adapter = adapter;
+
+/**
+ * Define binding `name` with callback `fn(el, val)`.
+ *
+ * @param {String} name or object
+ * @param {String|Object} name
+ * @param {Function} fn
+ * @api public
+ */
+
+exports.bind = function(name, fn){
+  if ('object' == typeof name) {
+    for (var key in name) {
+      exports.bind(key, name[key]);
+    }
+    return;
+  }
+
+  exports.bindings[name] = fn;
+};
+
+/**
+ * Middleware
+ * @param {Function} fn
+ * @api public
+ */
+
+exports.use = function(fn) {
+  fn(exports);
+  return this;
+};
+
+/**
+ * Initialize a reactive template for `el` and `obj`.
+ *
+ * @param {Element} el
+ * @param {Element} obj
+ * @param {Object} options
+ * @api public
+ */
+
+function Reactive(el, model, view) {
+  if (!(this instanceof Reactive)) return new Reactive(el, model, view);
+  this.adapter = exports.adapter;
+  this.el = el;
+  this.model = model;
+  this.els = [];
+  this.view = view || {};
+  this.bindAll();
+  this.bindInterpolation(this.el, []);
+}
+
+/**
+ * Subscribe to changes on `prop`.
+ *
+ * @param {String} prop
+ * @param {Function} fn
+ * @return {Reactive}
+ * @api private
+ */
+
+Reactive.prototype.sub = function(prop, fn){
+  this.adapter.subscribe(this.model, prop, fn);
+  return this;
+};
+
+/**
+ * Unsubscribe to changes from `prop`.
+ *
+ * @param {String} prop
+ * @param {Function} fn
+ * @return {Reactive}
+ * @api private
+ */
+
+Reactive.prototype.unsub = function(prop, fn){
+  this.adapter.unsubscribe(this.model, prop, fn);
+  return this;
+};
+
+/**
+ * Get a `prop`
+ *
+ * @param {String} prop
+ * @param {Mixed} val
+ * @return {Mixed}
+ * @api private
+ */
+
+Reactive.prototype.get = function(prop) {
+  return this.adapter.get(this.model, prop);
+};
+
+/**
+ * Set a `prop`
+ *
+ * @param {String} prop
+ * @param {Mixed} val
+ * @return {Reactive}
+ * @api private
+ */
+
+Reactive.prototype.set = function(prop, val) {
+  this.adapter.set(this.model, prop, val);
+  return this;
+};
+
+/**
+ * Traverse and bind all interpolation within attributes and text.
+ *
+ * @param {Element} el
+ * @api private
+ */
+
+Reactive.prototype.bindInterpolation = function(el, els){
+
+  // element
+  if (el.nodeType == 1) {
+    for (var i = 0; i < el.attributes.length; i++) {
+      var attr = el.attributes[i];
+      if (utils.hasInterpolation(attr.value)) {
+        new AttrBinding(this, el, attr);
+      }
+    }
+  }
+
+  // text node
+  if (el.nodeType == 3) {
+    if (utils.hasInterpolation(el.data)) {
+      debug('bind text "%s"', el.data);
+      new TextBinding(this, el);
+    }
+  }
+
+  // walk nodes
+  for (var i = 0; i < el.childNodes.length; i++) {
+    var node = el.childNodes[i];
+    this.bindInterpolation(node, els);
+  }
+};
+
+/**
+ * Apply all bindings.
+ *
+ * @api private
+ */
+
+Reactive.prototype.bindAll = function() {
+  for (var name in exports.bindings) {
+    this.bind(name, exports.bindings[name]);
+  }
+};
+
+/**
+ * Bind `name` to `fn`.
+ *
+ * @param {String|Object} name or object
+ * @param {Function} fn
+ * @api public
+ */
+
+Reactive.prototype.bind = function(name, fn) {
+  if ('object' == typeof name) {
+    for (var key in name) {
+      this.bind(key, name[key]);
+    }
+    return;
+  }
+
+  var els = query.all('[' + name + ']', this.el);
+  if (this.el.hasAttribute && this.el.hasAttribute(name)) {
+    els = [].slice.call(els);
+    els.unshift(this.el);
+  }
+  if (!els.length) return;
+
+  debug('bind [%s] (%d elements)', name, els.length);
+  for (var i = 0; i < els.length; i++) {
+    var binding = new Binding(name, this, els[i], fn);
+    binding.bind();
+  }
+};
+
+/**
+ * Use middleware
+ *
+ * @api public
+ */
+
+Reactive.prototype.use = function(fn) {
+  fn(this);
+  return this;
+};
+
+// bundled bindings
+
+exports.use(bindings);
+
+});
+require.register("component-reactive/lib/utils.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var debug = require('debug')('reactive:utils');
+var props = require('props');
+var adapter = require('./adapter');
+
+/**
+ * Function cache.
+ */
+
+var cache = {};
+
+/**
+ * Return interpolation property names in `str`,
+ * for example "{foo} and {bar}" would return
+ * ['foo', 'bar'].
+ *
+ * @param {String} str
+ * @return {Array}
+ * @api private
+ */
+
+exports.interpolationProps = function(str) {
+  var m;
+  var arr = [];
+  var re = /\{([^}]+)\}/g;
+
+  while (m = re.exec(str)) {
+    var expr = m[1];
+    arr = arr.concat(props(expr));
+  }
+
+  return unique(arr);
+};
+
+/**
+ * Interpolate `str` with the given `fn`.
+ *
+ * @param {String} str
+ * @param {Function} fn
+ * @return {String}
+ * @api private
+ */
+
+exports.interpolate = function(str, fn){
+  return str.replace(/\{([^}]+)\}/g, function(_, expr){
+    var cb = cache[expr];
+    if (!cb) cb = cache[expr] = compile(expr);
+    return fn(expr.trim(), cb);
+  });
+};
+
+/**
+ * Check if `str` has interpolation.
+ *
+ * @param {String} str
+ * @return {Boolean}
+ * @api private
+ */
+
+exports.hasInterpolation = function(str) {
+  return ~str.indexOf('{');
+};
+
+/**
+ * Remove computed properties notation from `str`.
+ *
+ * @param {String} str
+ * @return {String}
+ * @api private
+ */
+
+exports.clean = function(str) {
+  return str.split('<')[0].trim();
+};
+
+/**
+ * Call `prop` on `model` or `view`.
+ *
+ * @param {Object} model
+ * @param {Object} view
+ * @param {String} prop
+ * @return {Mixed}
+ * @api private
+ */
+
+exports.call = function(model, view, prop){
+  // view method
+  if ('function' == typeof view[prop]) {
+    return view[prop]();
+  }
+
+  // view value
+  if (view.hasOwnProperty(prop)) {
+    return view[prop];
+  }
+
+  // get property from model
+  return adapter.get(model, prop);
+};
+
+/**
+ * Compile `expr` to a `Function`.
+ *
+ * @param {String} expr
+ * @return {Function}
+ * @api private
+ */
+
+function compile(expr) {
+  // TODO: use props() callback instead
+  var re = /\.\w+|\w+ *\(|"[^"]*"|'[^']*'|\/([^/]+)\/|[a-zA-Z_]\w*/g;
+  var p = props(expr);
+
+  var body = expr.replace(re, function(_) {
+    if ('(' == _[_.length - 1]) return access(_);
+    if (!~p.indexOf(_)) return _;
+    return call(_);
+  });
+
+  debug('compile `%s`', body);
+  return new Function('model', 'view', 'call', 'return ' + body);
+}
+
+/**
+ * Access a method `prop` with dot notation.
+ *
+ * @param {String} prop
+ * @return {String}
+ * @api private
+ */
+
+function access(prop) {
+  return 'model.' + prop;
+}
+
+/**
+ * Call `prop` on view, model, or access the model's property.
+ *
+ * @param {String} prop
+ * @return {String}
+ * @api private
+ */
+
+function call(prop) {
+  return 'call(model, view, "' + prop + '")';
+}
+
+/**
+ * Return unique array.
+ *
+ * @param {Array} arr
+ * @return {Array}
+ * @api private
+ */
+
+function unique(arr) {
+  var ret = [];
+
+  for (var i = 0; i < arr.length; i++) {
+    if (~ret.indexOf(arr[i])) continue;
+    ret.push(arr[i]);
+  }
+
+  return ret;
+}
+
+});
+require.register("component-reactive/lib/text-binding.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var debug = require('debug')('reactive:text-binding');
+var utils = require('./utils');
+
+/**
+ * Expose `TextBinding`.
+ */
+
+module.exports = TextBinding;
+
+/**
+ * Initialize a new text binding.
+ *
+ * @param {Reactive} view
+ * @param {Element} node
+ * @param {Attribute} attr
+ * @api private
+ */
+
+function TextBinding(reactive, node) {
+  this.reactive = reactive;
+  this.text = node.data;
+  this.node = node;
+  this.props = utils.interpolationProps(this.text);
+  this.subscribe();
+  this.render();
+}
+
+/**
+ * Subscribe to changes.
+ */
+
+TextBinding.prototype.subscribe = function(){
+  var self = this;
+  var reactive = this.reactive;
+  this.props.forEach(function(prop){
+    reactive.sub(prop, function(){
+      self.render();
+    });
+  });
+};
+
+/**
+ * Render text.
+ */
+
+TextBinding.prototype.render = function(){
+  var node = this.node;
+  var text = this.text;
+  var reactive = this.reactive;
+  var model = reactive.model;
+
+  // TODO: delegate most of this to `Reactive`
+  debug('render "%s"', text);
+  node.data = utils.interpolate(text, function(prop, fn){
+    if (fn) {
+      return fn(model, reactive.view, utils.call);
+    } else {
+      return reactive.get(model, prop);
+    }
+  });
+};
+
+});
+require.register("component-reactive/lib/attr-binding.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var debug = require('debug')('reactive:attr-binding');
+var utils = require('./utils');
+
+/**
+ * Expose `AttrBinding`.
+ */
+
+module.exports = AttrBinding;
+
+/**
+ * Initialize a new attribute binding.
+ *
+ * @param {Reactive} view
+ * @param {Element} node
+ * @param {Attribute} attr
+ * @api private
+ */
+
+function AttrBinding(reactive, node, attr) {
+  var self = this;
+  this.reactive = reactive;
+  this.node = node;
+  this.attr = attr;
+  this.text = attr.value;
+  this.props = utils.interpolationProps(this.text);
+  this.subscribe();
+  this.render();
+}
+
+/**
+ * Subscribe to changes.
+ */
+
+AttrBinding.prototype.subscribe = function(){
+  var self = this;
+  var reactive = this.reactive;
+  this.props.forEach(function(prop){
+    reactive.sub(prop, function(){
+      self.render();
+    });
+  });
+};
+
+/**
+ * Render the value.
+ */
+
+AttrBinding.prototype.render = function(){
+  var attr = this.attr;
+  var text = this.text;
+  var reactive = this.reactive;
+  var model = reactive.model;
+
+  // TODO: delegate most of this to `Reactive`
+  debug('render %s "%s"', attr.name, text);
+  attr.value = utils.interpolate(text, function(prop, fn){
+    if (fn) {
+      return fn(model, reactive.view, utils.call);
+    } else {
+      return reactive.get(model, prop);
+    }
+  });
+};
+
+});
+require.register("component-reactive/lib/binding.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var parse = require('format-parser');
+
+/**
+ * Expose `Binding`.
+ */
+
+module.exports = Binding;
+
+/**
+ * Initialize a binding.
+ *
+ * @api private
+ */
+
+function Binding(name, reactive, el, fn) {
+  this.name = name;
+  this.reactive = reactive;
+  this.model = reactive.model;
+  this.view = reactive.view;
+  this.el = el;
+  this.fn = fn;
+}
+
+/**
+ * Apply the binding.
+ *
+ * @api private
+ */
+
+Binding.prototype.bind = function() {
+  var val = this.el.getAttribute(this.name);
+  this.fn(this.el, val, this.model);
+};
+
+/**
+ * Perform interpolation on `name`.
+ *
+ * @param {String} name
+ * @return {String}
+ * @api public
+ */
+
+Binding.prototype.interpolate = function(name) {
+  var self = this;
+  name = clean(name);
+
+  if (~name.indexOf('{')) {
+    return name.replace(/{([^}]+)}/g, function(_, name){
+      return self.value(name);
+    });
+  }
+
+  return this.formatted(name);
+};
+
+/**
+ * Return value for property `name`.
+ *
+ *  - check if the "view" has a `name` method
+ *  - check if the "model" has a `name` method
+ *  - check if the "model" has a `name` property
+ *
+ * @param {String} name
+ * @return {Mixed}
+ * @api public
+ */
+
+Binding.prototype.value = function(name) {
+  var view = this.view;
+  name = clean(name);
+
+  // view method
+  if ('function' == typeof view[name]) {
+    return view[name]();
+  }
+
+  // view value
+  if (view.hasOwnProperty(name)) {
+    return view[name];
+  }
+
+  return this.reactive.get(name);
+};
+
+/**
+ * Return formatted property.
+ *
+ * @param {String} fmt
+ * @return {Mixed}
+ * @api public
+ */
+
+Binding.prototype.formatted = function(fmt) {
+  var calls = parse(clean(fmt));
+  var name = calls[0].name;
+  var val = this.value(name);
+
+  for (var i = 1; i < calls.length; ++i) {
+    var call = calls[i];
+    call.args.unshift(val);
+    var fn = this.view[call.name];
+    val = fn.apply(this.view, call.args);
+  }
+
+  return val;
+};
+
+/**
+ * Invoke `fn` on changes.
+ *
+ * @param {Function} fn
+ * @api public
+ */
+
+Binding.prototype.change = function(fn) {
+  fn.call(this);
+
+  var self = this;
+  var reactive = this.reactive;
+  var val = this.el.getAttribute(this.name);
+
+  // computed props
+  var parts = val.split('<');
+  val = parts[0];
+  var computed = parts[1];
+  if (computed) computed = computed.trim().split(/\s+/);
+
+  // interpolation
+  if (hasInterpolation(val)) {
+    var props = interpolationProps(val);
+    props.forEach(function(prop){
+      reactive.sub(prop, fn.bind(self));
+    });
+    return;
+  }
+
+  // formatting
+  var calls = parse(val);
+  var prop = calls[0].name;
+
+  // computed props
+  if (computed) {
+    computed.forEach(function(prop){
+      reactive.sub(prop, fn.bind(self));
+    });
+    return;
+  }
+
+  // bind to prop
+  reactive.sub(prop, fn.bind(this));
+};
+
+/**
+ * Return interpolation property names in `str`,
+ * for example "{foo} and {bar}" would return
+ * ['foo', 'bar'].
+ *
+ * @param {String} str
+ * @return {Array}
+ * @api private
+ */
+
+function interpolationProps(str) {
+  var m;
+  var arr = [];
+  var re = /\{([^}]+)\}/g;
+  while (m = re.exec(str)) {
+    arr.push(m[1]);
+  }
+  return arr;
+}
+
+/**
+ * Check if `str` has interpolation.
+ *
+ * @param {String} str
+ * @return {Boolean}
+ * @api private
+ */
+
+function hasInterpolation(str) {
+  return ~str.indexOf('{');
+}
+
+/**
+ * Remove computed properties notation from `str`.
+ *
+ * @param {String} str
+ * @return {String}
+ * @api private
+ */
+
+function clean(str) {
+  return str.split('<')[0].trim();
+}
+
+});
+require.register("component-reactive/lib/bindings.js", function(exports, require, module){
+/**
+ * Module dependencies.
+ */
+
+var classes = require('classes');
+var event = require('event');
+
+/**
+ * Attributes supported.
+ */
+
+var attrs = [
+  'id',
+  'src',
+  'rel',
+  'cols',
+  'rows',
+  'name',
+  'href',
+  'title',
+  'class',
+  'style',
+  'width',
+  'value',
+  'height',
+  'tabindex',
+  'placeholder'
+];
+
+/**
+ * Events supported.
+ */
+
+var events = [
+  'change',
+  'click',
+  'dblclick',
+  'mousedown',
+  'mouseup',
+  'blur',
+  'focus',
+  'input',
+  'submit',
+  'keydown',
+  'keypress',
+  'keyup'
+];
+
+/**
+ * Apply bindings.
+ */
+
+module.exports = function(reactive){
+
+  /**
+   * Generate attribute bindings.
+   */
+
+  attrs.forEach(function(attr){
+    reactive.bind('data-' + attr, function(el, name, obj){
+      this.change(function(){
+        el.setAttribute(attr, this.interpolate(name));
+      });
+    });
+  });
+
+/**
+ * Append child element.
+ */
+
+  reactive.bind('data-append', function(el, name){
+    var other = this.value(name);
+    el.appendChild(other);
+  });
+
+/**
+ * Replace element.
+ */
+
+  reactive.bind('data-replace', function(el, name){
+    var other = this.value(name);
+    el.parentNode.replaceChild(other, el);
+  });
+
+  /**
+   * Show binding.
+   */
+
+  reactive.bind('data-show', function(el, name){
+    this.change(function(){
+      if (this.value(name)) {
+        classes(el).add('show').remove('hide');
+      } else {
+        classes(el).remove('show').add('hide');
+      }
+    });
+  });
+
+  /**
+   * Hide binding.
+   */
+
+  reactive.bind('data-hide', function(el, name){
+    this.change(function(){
+      if (this.value(name)) {
+        classes(el).remove('show').add('hide');
+      } else {
+        classes(el).add('show').remove('hide');
+      }
+    });
+  });
+
+  /**
+   * Checked binding.
+   */
+
+  reactive.bind('data-checked', function(el, name){
+    this.change(function(){
+      if (this.value(name)) {
+        el.setAttribute('checked', 'checked');
+      } else {
+        el.removeAttribute('checked');
+      }
+    });
+  });
+
+  /**
+   * Text binding.
+   */
+
+  reactive.bind('data-text', function(el, name){
+    this.change(function(){
+      el.textContent = this.interpolate(name);
+    });
+  });
+
+  /**
+   * HTML binding.
+   */
+
+  reactive.bind('data-html', function(el, name){
+    this.change(function(){
+      el.innerHTML = this.formatted(name);
+    });
+  });
+
+  /**
+   * Generate event bindings.
+   */
+
+  events.forEach(function(name){
+    reactive.bind('on-' + name, function(el, method){
+      var view = this.reactive.view;
+      event.bind(el, name, function(e){
+        var fn = view[method];
+        if (!fn) throw new Error('method .' + method + '() missing');
+        view[method](e);
+      });
+    });
+  });
+};
+
+});
+require.register("component-reactive/lib/adapter.js", function(exports, require, module){
+/**
+ * Default subscription method.
+ * Subscribe to changes on the model.
+ *
+ * @param {Object} obj
+ * @param {String} prop
+ * @param {Function} fn
+ */
+
+exports.subscribe = function(obj, prop, fn) {
+  if (!obj.on) return;
+  obj.on('change ' + prop, fn);
+};
+
+/**
+ * Default unsubscription method.
+ * Unsubscribe from changes on the model.
+ */
+
+exports.unsubscribe = function(obj, prop, fn) {
+  if (!obj.off) return;
+  obj.off('change ' + prop, fn);
+};
+
+/**
+ * Default setter method.
+ * Set a property on the model.
+ *
+ * @param {Object} obj
+ * @param {String} prop
+ * @param {Mixed} val
+ */
+
+exports.set = function(obj, prop, val) {
+  if ('function' == typeof obj[prop]) {
+    obj[prop](val);
+  } else {
+    obj[prop] = val;
+  }
+};
+
+/**
+ * Default getter method.
+ * Get a property from the model.
+ *
+ * @param {Object} obj
+ * @param {String} prop
+ * @return {Mixed}
+ */
+
+exports.get = function(obj, prop) {
+  if ('function' == typeof obj[prop]) {
+    return obj[prop]();
+  } else {
+    return obj[prop];
+  }
+};
+
+});
+require.register("weather-view/index.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var Emitter = require('emitter')
+  , domify = require('domify')
+  , reactive = require('reactive')
+  , templ = domify(require('./template.html'));
+
+/**
+ * Expose `WeatherView`.
+ */
+
+module.exports = WeatherView;
+
+Emitter(WeatherView.prototype);
+
+/**
+ * WeatherView.
+ */
+
+function WeatherView(data) {
+  this.data = data;
+  this.el = templ;
+  reactive(templ, this);
+}
+
+
+});
 require.register("boot/boot.js", function(exports, require, module){
 
 /**
  * Module dependencies.
  */
 
-var dom = require('dom')
+var WeatherView = require('weather-view')
+  , dom = require('dom')
   , page = require('page')
-  , request = require('superagent');
+  , request = require('superagent')
+  , raf = require('raf')
+  , sprintf = require('format').format;
 
+/**
+ * DOM-elements cache.
+ */
 
 var content = document.querySelector('#content');
 
+/**
+ * Routes.
+ */
 
 page('/', overview);
-page();
+page('*', notfound);
+raf(page);
 
 
 /**
@@ -3286,19 +6343,44 @@ page();
  */
 
 function overview(ctx, next) {
+  var width = window.innerWidth
+    , height = window.innerHeight;
+
+  var camera = dom('<input type="image" width="'+width+'" height="'+height+'" name="NewPosition" />');
+  camera.src('http://kjero12.viewnetcam.com/nphMotionJpeg?Resolution='+width+'x'+height+'&Quality=Standard');
+  camera.appendTo(content);
+
+  var weather = new WeatherView({
+    'outsideTemp': '12',
+    'insideTemp': '13',
+    'windSpeed': '14'
+  });
+  content.appendChild(weather.el);
+
   function render(res) {
-    var weatherlink = dom('<div class="weatherlink">'+res.text+'</div>');
-    var width = window.screen.width
-    var height = (width / 640) * 480;
-    height = height < window.screen.height ? height : window.screen.height;
-    var camera = dom('<input type="image" width="'+width+'" height="'+height+'" name="NewPosition" />');
-    camera.src('http://kjero12.viewnetcam.com/nphMotionJpeg?Resolution='+width+'x'+height+'&Quality=Standard');
-    camera.appendTo(document.body);
-    weatherlink.find('img').remove();
-    weatherlink.appendTo(content);
+    if (res.ok) {
+      Object.keys(res.body).forEach(function(key) {
+        weather[key] = res.body[key].current;
+        weather.emit('change ' + key);
+      });
+    }
   }
 
-  request.get('/weather').end(render);
+  function interval() {
+    request.get('/weather').end(render);
+    setTimeout(interval, 5000);
+  }
+  interval();
+}
+
+
+/**
+ * Not found.
+ */
+
+function notfound(ctx) {
+  var markup = dom('<h1>Page not found');
+  markup.appendTo(content);
 }
 
 
@@ -3318,6 +6400,16 @@ function overview(ctx, next) {
 
 
 
+
+
+
+
+
+
+
+require.register("weather-view/template.html", function(exports, require, module){
+module.exports = '<div class="weather">\n  <div class="weather-measure temperature temperature-outside">{ outsideTemp || \'\' }</div>\n  <div class="weather-measure temperature temperature-inside"> { insideTemp || \'\' }</div>\n  <div class="weather-measure windspeed">{ windSpeed || \'\' }</div>\n</div>\n';
+});
 require.alias("boot/boot.js", "boot/deps/boot/boot.js");
 require.alias("boot/boot.js", "boot/deps/boot/index.js");
 require.alias("boot/boot.js", "boot/index.js");
@@ -3359,6 +6451,35 @@ require.alias("component-matches-selector/index.js", "yields-traverse/deps/match
 require.alias("component-query/index.js", "component-matches-selector/deps/query/index.js");
 
 require.alias("yields-traverse/index.js", "yields-traverse/index.js");
+require.alias("component-raf/index.js", "boot/deps/raf/index.js");
+
+require.alias("component-model/lib/index.js", "boot/deps/model/lib/index.js");
+require.alias("component-model/lib/static.js", "boot/deps/model/lib/static.js");
+require.alias("component-model/lib/proto.js", "boot/deps/model/lib/proto.js");
+require.alias("component-model/lib/index.js", "boot/deps/model/index.js");
+require.alias("component-each/index.js", "component-model/deps/each/index.js");
+require.alias("component-to-function/index.js", "component-each/deps/to-function/index.js");
+
+require.alias("component-type/index.js", "component-each/deps/type/index.js");
+
+require.alias("component-emitter/index.js", "component-model/deps/emitter/index.js");
+require.alias("component-indexof/index.js", "component-emitter/deps/indexof/index.js");
+
+require.alias("component-collection/index.js", "component-model/deps/collection/index.js");
+require.alias("component-enumerable/index.js", "component-collection/deps/enumerable/index.js");
+require.alias("component-to-function/index.js", "component-enumerable/deps/to-function/index.js");
+
+require.alias("visionmedia-superagent/lib/client.js", "component-model/deps/superagent/lib/client.js");
+require.alias("visionmedia-superagent/lib/client.js", "component-model/deps/superagent/index.js");
+require.alias("component-emitter/index.js", "visionmedia-superagent/deps/emitter/index.js");
+require.alias("component-indexof/index.js", "component-emitter/deps/indexof/index.js");
+
+require.alias("RedVentures-reduce/index.js", "visionmedia-superagent/deps/reduce/index.js");
+
+require.alias("visionmedia-superagent/lib/client.js", "visionmedia-superagent/index.js");
+require.alias("component-model/lib/index.js", "component-model/index.js");
+require.alias("heavyk-format/index.js", "boot/deps/format/index.js");
+
 require.alias("visionmedia-page.js/index.js", "boot/deps/page/index.js");
 
 require.alias("visionmedia-superagent/lib/client.js", "boot/deps/superagent/lib/client.js");
@@ -3369,4 +6490,34 @@ require.alias("component-indexof/index.js", "component-emitter/deps/indexof/inde
 require.alias("RedVentures-reduce/index.js", "visionmedia-superagent/deps/reduce/index.js");
 
 require.alias("visionmedia-superagent/lib/client.js", "visionmedia-superagent/index.js");
+require.alias("weather-view/index.js", "boot/deps/weather-view/index.js");
+require.alias("component-domify/index.js", "weather-view/deps/domify/index.js");
+
+require.alias("component-emitter/index.js", "weather-view/deps/emitter/index.js");
+require.alias("component-indexof/index.js", "component-emitter/deps/indexof/index.js");
+
+require.alias("component-reactive/lib/index.js", "weather-view/deps/reactive/lib/index.js");
+require.alias("component-reactive/lib/utils.js", "weather-view/deps/reactive/lib/utils.js");
+require.alias("component-reactive/lib/text-binding.js", "weather-view/deps/reactive/lib/text-binding.js");
+require.alias("component-reactive/lib/attr-binding.js", "weather-view/deps/reactive/lib/attr-binding.js");
+require.alias("component-reactive/lib/binding.js", "weather-view/deps/reactive/lib/binding.js");
+require.alias("component-reactive/lib/bindings.js", "weather-view/deps/reactive/lib/bindings.js");
+require.alias("component-reactive/lib/adapter.js", "weather-view/deps/reactive/lib/adapter.js");
+require.alias("component-reactive/lib/index.js", "weather-view/deps/reactive/index.js");
+require.alias("component-format-parser/index.js", "component-reactive/deps/format-parser/index.js");
+
+require.alias("component-props/index.js", "component-reactive/deps/props/index.js");
+require.alias("component-props/index.js", "component-reactive/deps/props/index.js");
+require.alias("component-props/index.js", "component-props/index.js");
+require.alias("visionmedia-debug/index.js", "component-reactive/deps/debug/index.js");
+require.alias("visionmedia-debug/debug.js", "component-reactive/deps/debug/debug.js");
+
+require.alias("component-event/index.js", "component-reactive/deps/event/index.js");
+
+require.alias("component-classes/index.js", "component-reactive/deps/classes/index.js");
+require.alias("component-indexof/index.js", "component-classes/deps/indexof/index.js");
+
+require.alias("component-query/index.js", "component-reactive/deps/query/index.js");
+
+require.alias("component-reactive/lib/index.js", "component-reactive/index.js");
 require.alias("boot/boot.js", "boot/index.js");

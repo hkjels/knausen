@@ -1,5 +1,0 @@
-{
-  "name": "typography",
-  "scripts": ["scale.js"],
-  "styles": ["scale.css"]
-}
